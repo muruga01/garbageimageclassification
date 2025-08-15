@@ -17,20 +17,20 @@ st.title("♻️ Trash Classifier")
 st.markdown("Upload an image of a piece of trash, and I'll tell you what category it belongs to!")
 
 # --- Configuration & Model Loading ---
-# NOTE: The model file (e.g., 'best_model.pth') must be in the same directory as this script.
-MODEL_PATH = 'best_model.pth'
+# NOTE: The model file ('best_model.pth') must be in the same directory as this script.
+MODEL_PATH_STR = 'best_model.pth' # This is now just the file path string
 NUM_CLASSES = 6
 CLASS_NAMES = ['cardboard', 'glass', 'metal', 'paper', 'plastic', 'trash']
 IMAGE_SIZE = (224, 224)
 
 # Define the model architecture. This must match the model used for training.
-# We'll use the same function from the training script to ensure consistency.
 def build_model(model_name, num_classes):
     """
     Loads a pre-trained model and adds a custom classifier.
     """
     if model_name == "resnet50":
-        model = models.resnet50(weights=None) # No weights needed, we'll load them later
+        # Pass weights=None as we'll load custom weights later.
+        model = models.resnet50(weights=None) 
         num_ftrs = model.fc.in_features
         model.fc = nn.Linear(num_ftrs, num_classes)
     elif model_name == "mobilenet_v2":
@@ -46,7 +46,6 @@ def build_model(model_name, num_classes):
     return model
 
 # Load the trained model.
-# NOTE: Replace 'mobilenet_v2' with the model you actually trained.
 @st.cache_resource
 def load_trained_model():
     """
@@ -54,17 +53,24 @@ def load_trained_model():
     This function is cached by Streamlit to avoid reloading the model on every interaction.
     """
     try:
-        # Build the architecture first
-        model = build_model('mobilenet_v2', NUM_CLASSES)
+        # 1. Build the model architecture first
+        model = build_model('resnet50', NUM_CLASSES)
         
-        # Load the state dictionary
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device('cpu')))
-        
+        # 2. Load the state dictionary from the file
+        # map_location is used to load the model on CPU, which is good for deployment
+        state_dict = torch.load(MODEL_PATH_STR, map_location=torch.device('cpu'))
+
+        # 3. Load the state dictionary into the model, ignoring the mismatched 'fc' layer
+        model.load_state_dict(state_dict, strict=False)
+
         # Set the model to evaluation mode
         model.eval()
         return model
     except FileNotFoundError:
-        st.error(f"Model file not found. Please ensure '{MODEL_PATH}' is in the same directory.")
+        st.error(f"Model file not found. Please ensure '{MODEL_PATH_STR}' is in the same directory.")
+        return None
+    except Exception as e:
+        st.error(f"An error occurred while loading the model: {e}")
         return None
 
 # Get the model instance
@@ -79,9 +85,6 @@ preprocess = transforms.Compose([
 
 # --- Prediction Function ---
 def predict_image_class(image):
-    """
-    Makes a prediction on the given image using the loaded model.
-    """
     if model is None:
         return None, "Model not loaded."
     
@@ -96,12 +99,10 @@ def predict_image_class(image):
     
     return predicted_class, None
 
-
 if model is not None:
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
     if uploaded_file is not None:
-        # Display the uploaded image
         image_bytes = uploaded_file.getvalue()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         st.image(image, caption="Uploaded Image", use_column_width=True)
