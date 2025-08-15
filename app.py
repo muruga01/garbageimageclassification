@@ -6,6 +6,16 @@ from torchvision import models, transforms
 from PIL import Image
 import io
 
+# --- Streamlit UI ---
+st.set_page_config(
+    page_title="Trash Classifier",
+    page_icon="♻️",
+    layout="centered"
+)
+
+st.title("♻️ Trash Classifier")
+st.markdown("Upload an image of a piece of trash, and I'll tell you what category it belongs to!")
+
 # --- Configuration & Model Loading ---
 # NOTE: The model file (e.g., 'best_model.pth') must be in the same directory as this script.
 MODEL_PATH = 'best_model.pth'
@@ -86,15 +96,6 @@ def predict_image_class(image):
     
     return predicted_class, None
 
-# --- Streamlit UI ---
-st.set_page_config(
-    page_title="Trash Classifier",
-    page_icon="♻️",
-    layout="centered"
-)
-
-st.title("♻️ Trash Classifier")
-st.markdown("Upload an image of a piece of trash, and I'll tell you what category it belongs to!")
 
 if model is not None:
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
