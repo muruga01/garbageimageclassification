@@ -1,121 +1,74 @@
 import streamlit as st
-import torch
-import torch.nn as nn
-from torchvision import models, transforms
+import tensorflow as tf
+import numpy as np
 from PIL import Image
-import io
+import pandas as pd
 
-# --- Streamlit UI ---
-st.set_page_config(
-    page_title="Trash Classifier",
-    page_icon="♻️",
-    layout="centered"
-)
+# Set page configuration
+st.set_page_config(page_title="Garbage Classification App", page_icon="🗑️")
 
-st.title("♻️ Trash Classifier")
-st.markdown("Upload an image of a piece of trash, and I'll tell you what category it belongs to!")
+# Title and description
+st.title("🗑️ Garbage Classification App")
+st.write("Upload an image of waste to classify it into one of the following categories: plastic, metal, glass, cardboard or paper.")
 
-# --- Configuration & Model Loading ---
-# NOTE: The model file ('best_model.pth') must be in the same directory as this script.
-MODEL_PATH_STR = 'best_model.pth' # This is now just the file path string
-NUM_CLASSES = 6
-CLASS_NAMES = ['cardboard', 'glass', 'metal', 'paper', 'plastic', 'trash']
-IMAGE_SIZE = (224, 224)
-
-# Define the model architecture. This must match the model used for training.
-def build_model(model_name, num_classes):
-    """
-    Loads a pre-trained model and adds a custom classifier.
-    """
-    if model_name == "resnet50":
-        # Pass weights=None as we'll load custom weights later.
-        model = models.resnet50(weights=None) 
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, num_classes)
-    elif model_name == "mobilenet_v2":
-        model = models.mobilenet_v2(weights=None)
-        num_ftrs = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(num_ftrs, num_classes)
-    elif model_name == "efficientnet_b0":
-        model = models.efficientnet_b0(weights=None)
-        num_ftrs = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(num_ftrs, num_classes)
-    else:
-        raise ValueError("Unsupported model name.")
+# Load the pre-trained model
+@st.cache_resource
+def load_model():
+    model = tf.keras.models.load_model('trashnet_efficientnetb0.h5')
     return model
 
-# Load the trained model.
-@st.cache_resource
-def load_trained_model():
-    """
-    Loads the model state from the saved .pth file.
-    This function is cached by Streamlit to avoid reloading the model on every interaction.
-    """
-    try:
-        # 1. Build the model architecture first
-        model = build_model('resnet50', NUM_CLASSES)
-        
-        # 2. Load the state dictionary from the file
-        # map_location is used to load the model on CPU, which is good for deployment
-        state_dict = torch.load(MODEL_PATH_STR, map_location=torch.device('cpu'))
+model = load_model()
 
-        # 3. Load the state dictionary into the model, ignoring the mismatched 'fc' layer
-        model.load_state_dict(state_dict, strict=False)
+# Define class names (must match the order used during training)
+class_names = ['plastic', 'metal', 'glass', 'cardboard', 'paper']
 
-        # Set the model to evaluation mode
-        model.eval()
-        return model
-    except FileNotFoundError:
-        st.error(f"Model file not found. Please ensure '{MODEL_PATH_STR}' is in the same directory.")
-        return None
-    except Exception as e:
-        st.error(f"An error occurred while loading the model: {e}")
-        return None
+# Function to preprocess the uploaded image
+def preprocess_image(image):
+    img = image.resize((224, 224))  # Resize to 224x224
+    img_array = np.array(img) / 255.0  # Normalize to [0,1]
+    if img_array.shape[-1] != 3:  # Ensure RGB channels
+        img_array = np.stack((img_array,) * 3, axis=-1) if len(img_array.shape) == 2 else img_array[:, :, :3]
+    img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
+    return img_array
 
-# Get the model instance
-model = load_trained_model()
+# File uploader
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
-# Define the image transforms for inference
-preprocess = transforms.Compose([
-    transforms.Resize(IMAGE_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
+if uploaded_file is not None:
+    # Display uploaded image
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Uploaded Image', use_container_width=True)
 
-# --- Prediction Function ---
-def predict_image_class(image):
-    if model is None:
-        return None, "Model not loaded."
+    # Preprocess and predict
+    img_array = preprocess_image(image)
+    predictions = model.predict(img_array)
+    confidence_scores = predictions[0]
     
-    # Preprocess the image
-    image_tensor = preprocess(image)
-    image_tensor = image_tensor.unsqueeze(0) # Add a batch dimension
+    # Get top prediction
+    top_pred_idx = np.argmax(confidence_scores)
+    top_pred_class = class_names[top_pred_idx]
+    top_confidence = confidence_scores[top_pred_idx] * 100
 
-    with torch.no_grad():
-        outputs = model(image_tensor)
-        _, predicted_idx = torch.max(outputs, 1)
-        predicted_class = CLASS_NAMES[predicted_idx.item()]
-    
-    return predicted_class, None
+    # Display top prediction
+    st.subheader("Prediction")
+    st.write(f"**Category**: {top_pred_class}")
+    st.write(f"**Confidence**: {top_confidence:.2f}%")
 
-if model is not None:
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+    # Get top-3 predictions
+    top_3_indices = np.argsort(confidence_scores)[-3:][::-1]  # Top 3 in descending order
+    top_3_classes = [class_names[idx] for idx in top_3_indices]
+    top_3_confidences = [confidence_scores[idx] * 100 for idx in top_3_indices]
 
-    if uploaded_file is not None:
-        image_bytes = uploaded_file.getvalue()
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_column_width=True)
-        st.write("")
-        
-        with st.spinner("Analyzing..."):
-            predicted_class, error = predict_image_class(image)
-            if error:
-                st.error(error)
-            else:
-                st.success(f"Prediction: **{predicted_class.capitalize()}**")
+    # Create a DataFrame for top-3 predictions
+    top_3_df = pd.DataFrame({
+        'Category': top_3_classes,
+        'Confidence (%)': [f"{conf:.2f}" for conf in top_3_confidences]
+    })
 
-else:
-    st.info("The model could not be loaded. Please check the console for details.")
+    # Display top-3 predictions
+    st.subheader("Top-3 Predictions")
+    st.table(top_3_df)
 
+# Footer
 st.markdown("---")
-st.markdown("This application uses a pre-trained image classification model fine-tuned on the TrashNet dataset.")
+st.write("Built with Streamlit and TensorFlow | Dataset: TrashNet")
